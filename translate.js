@@ -4,8 +4,8 @@ import { parse, serialize } from 'parse5';
 import { DuplexProxy } from './duplex_proxy.js';
 
 const TRANSLATION_REDUCER = 90;
-const TRANSLATION_MAX_CHARS = 3700;
-const TRANSLATION_MAX_LENGTH = 170;
+const TRANSLATION_MAX_CHARS = 2000;
+const TRANSLATION_MAX_LENGTH = 100;
 
 const translations = {
     ite: 0,

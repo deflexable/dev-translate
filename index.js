@@ -5,7 +5,7 @@ const app = express();
 
 app.use(json());
 
-app.get('/translate', async (req, res) => {
+app.post('/translate', async (req, res) => {
     try {
         const { string, to } = req.body;
         const result = await translateX(string, to);

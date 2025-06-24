@@ -229,7 +229,7 @@ async function crawlProxy(fetcherProxy, entries) {
     const proxyResults = (
         await Promise.all([
             ...new Set(crawledProxy.flat())
-        ].slice(0, 30).map(async url => { // TODO:
+        ].slice(0, 100).map(async url => { // TODO:
             try {
                 const kk = await (
                     await timeoutFetch('http://httpbin.org/ip', {
