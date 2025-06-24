@@ -24,7 +24,7 @@ interface DuplexProxyExtras {
     /**
      * request timeout when fetching resources from proxy endpoint
      * 
-     * @default 7000
+     * @default 30000
      */
     fetchTimeout?: number;
     /**

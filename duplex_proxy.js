@@ -1,5 +1,4 @@
 import { HttpProxyAgent } from 'http-proxy-agent';
-import fetch, { Response } from 'node-fetch';
 
 const one_hour = 3600000;
 const MAX_WHITE_FAILURES = 5;
@@ -8,7 +7,7 @@ export function DuplexProxy(extras) {
     const {
         jumper = 3,
         jumps = Infinity,
-        fetchTimeout = 7000,
+        fetchTimeout = 30_000,
         restIntervalCount = 30,
         restTimer = 30000,
         ackResponse,
@@ -35,10 +34,18 @@ export function DuplexProxy(extras) {
     if (ackResponse !== undefined && typeof ackResponse !== 'function')
         throw `ackResponse should be a function but got ${ackResponse}`;
 
+    if (autoInstallProxies) {
+        if (!installer && !proxyCrawlerUrlEntries?.length)
+            throw 'when autoInstallProxies is truthy, installer or proxyCrawlerUrlEntries must be provided';
+    }
+
     const proxyVerse = {
         timer: undefined,
         lastChecked: Date.now(),
         isInstalling: false,
+        /**
+         * @type {Promise<void> | undefined}
+         */
         installationPromise: undefined,
         list: [],
         listIte: 0,
@@ -52,6 +59,8 @@ export function DuplexProxy(extras) {
     const installProxy = async () => {
         if (!autoInstallProxies && !installer) return;
         if (proxyVerse.installationPromise) return proxyVerse.installationPromise;
+        if (logProxy) console.warn('installing proxies');
+        let proxySize;
 
         proxyVerse.installationPromise = installer?.() || (async () => {
             clearTimeout(proxyVerse.timer);
@@ -60,6 +69,7 @@ export function DuplexProxy(extras) {
             proxyVerse.list = liveProxies;
             proxyVerse.listIte = 0;
             proxyVerse.lastChecked = Date.now();
+            proxySize = liveProxies.length;
 
             if (autoInstallProxies)
                 proxyVerse.timer = setTimeout(() => {
@@ -74,6 +84,7 @@ export function DuplexProxy(extras) {
 
         await proxyVerse.installationPromise;
         proxyVerse.installationPromise = undefined;
+        if (logProxy) console.warn('proxy installation success size:', proxySize);
     }
 
     installProxy();
@@ -122,7 +133,7 @@ export function DuplexProxy(extras) {
                         proxyVerse.whitelist.list[proxyVerse.whitelist.cursor]
                     ];
                 } else {
-                    await installProxy();
+                    if (proxyVerse.installationPromise) await proxyVerse.installationPromise;
                     if (!proxyVerse.list.length) {
                         if (!proxyVerse.whitelist.list.length) {
                             if (gracefullyKill) {
@@ -218,7 +229,7 @@ async function crawlProxy(fetcherProxy, entries) {
     const proxyResults = (
         await Promise.all([
             ...new Set(crawledProxy.flat())
-        ].map(async url => {
+        ].slice(0, 30).map(async url => { // TODO:
             try {
                 const kk = await (
                     await timeoutFetch('http://httpbin.org/ip', {
@@ -257,7 +268,5 @@ export const timeoutFetch = async (url, option, timeout = 60000) => {
 };
 
 const wait = (ms = 1000) => new Promise(resolve => {
-    setTimeout(() => {
-        resolve();
-    }, ms);
+    setTimeout(resolve, ms);
 });

@@ -1,12 +1,7 @@
-import fetch from 'node-fetch';
-import { AppApis } from '../../shared_values/common_values';
-import { Scope } from './variables';
 import translate from 'google-translate-api-x';
-import cld from 'cld';
-import proxyFetch from './proxy_rotator';
-import { IS_DEV } from '../env';
-import { useNode } from './sanitize';
-import { DuplexProxy } from './duplex_proxy';
+// import cld from 'cld';
+import { parse, serialize } from 'parse5';
+import { DuplexProxy } from './duplex_proxy.js';
 
 const TRANSLATION_REDUCER = 90;
 const TRANSLATION_MAX_CHARS = 3700;
@@ -23,7 +18,17 @@ const translations = {
     }
 };
 
-const ProxyFetcher = DuplexProxy({});
+const { fetch: doProxy } = DuplexProxy({
+    ackResponse: async res => {
+        if (
+            (await res.clone().text()).startsWith(")]}'") &&
+            res.status === 200
+        ) return { commit: res, success: true };
+    },
+    logProxy: true,
+    autoInstallProxies: true,
+    proxyCrawlerUrlEntries: ['https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=protocolipport&format=text&timeout=20000']
+});
 
 export const translateX = async (string, to = 'en') => {
     string = Array.isArray(string) ? string.map(v => `${v}`) : `${string}`;
@@ -99,8 +104,8 @@ const translateXCore = (string, to) => new Promise(resolve => {
                 const compare = await Promise.all((Array.isArray(string) ? string : [string]).map(async v => {
                     try {
                         if (!v.trim()) return { same: true, value: v, lang: 'en' };
-                        const d = await cld.detect(v);
-                        const shouldFetch = !d || !d.reliable || d.languages?.length !== 1 || d.languages[0].code !== to;
+                        // const d = await cld.detect(v);
+                        const shouldFetch = true; // !d || !d.reliable || d.languages?.length !== 1 || d.languages[0].code !== to;
                         return shouldFetch ? v : { same: true, value: v, lang: to };
                     } catch (_) {
                         return v;
@@ -120,24 +125,7 @@ const translateXCore = (string, to) => new Promise(resolve => {
 
             const res = translateInput.length ? await translate(
                 translateInput,
-                {
-                    requestFunction: async (url, opt) => {
-                        if (IS_DEV) console.log('proxying url:', url, ' opt:', opt);
-                        return proxyFetch(url, opt, {
-                            jumpTimeout: 4000,
-                            jumper: 3,
-                            jumps: IS_DEV ? Infinity : 5,
-                            flag: Scope.proxyVerse.flags.translation
-                        })(async res => {
-                            if (
-                                (await res.clone().text()).startsWith(")]}'") &&
-                                res.ok
-                            ) {
-                                return { commit: res, success: true };
-                            }
-                        });
-                    }
-                }
+                { requestFunction: doProxy }
             ) : [];
             let offset = 0;
 
@@ -160,50 +148,7 @@ const translateXCore = (string, to) => new Promise(resolve => {
             });
         } catch (e) {
             console.error('translateX err:', e);
-
-            if (IS_DEV || true) throw 'in dev mode'; // TODO:
-            try {
-                await Promise.all(
-                    promise.map(async ([strings, to, isArray, resolve]) => {
-
-                        const r = await (await fetch(AppApis.googleTranslationApi, {
-                            body: JSON.stringify({
-                                q: strings.filter(v => !v?.same),
-                                target: to,
-                                format: "text"
-                            }),
-                            headers: {
-                                "Content-Type": "application/json"
-                            },
-                            method: 'POST'
-                        })).json();
-                        let offset = 0;
-
-                        const results = r?.data?.translations,
-                            resultArr = results ? strings.map(v => {
-                                if (v.same) return { text: v.value, src: v.lang };
-                                const res = results.slice(offset, ++offset)[0];
-
-                                return {
-                                    text: res.translatedText,
-                                    src: res.detectedSourceLanguage
-                                };
-                            }) : strings.map(v => ({ text: v?.value || v, src: v?.lang || 'en' }));
-
-                        resolve(isArray ? resultArr : resultArr[0]);
-
-                        if (r.error || !Array.isArray(results))
-                            throw r.error || new Error('Expected an array in googleTranslationApi');
-                    })
-                );
-            } catch (e) {
-                console.log('final translateX err:', e);
-                promise.forEach(([strings, _, isArray, resolve]) => {
-                    const result = strings.map(v => ({ text: v?.value || v, src: v?.lang || 'en' }));
-                    resolve(isArray ? result : result[0]);
-                });
-                throw e;
-            }
+            throw e;
         }
     };
 
@@ -222,3 +167,40 @@ const translateXCore = (string, to) => new Promise(resolve => {
         }, dispatchTimeout);
     }
 });
+
+/**
+ * @type {(document: import('parse5').DefaultTreeAdapterMap['document'], query: string)=> import('parse5').DefaultTreeAdapterMap['childNode'] | null}
+ */
+function parseSelector(document, query) {
+    const [tag, attr, value] = query.includes('=') ? [undefined, query.split('=')[0], query.split('=').slice(1).join('=')] : [query];
+
+    const findSelector = (node) => {
+        if (tag ? node.nodeName === tag : (node.attrs || []).findIndex(v => v.name === attr && v.value === value) !== -1)
+            return node;
+
+        for (const thisNode of (node.childNodes || [])) {
+            const k = findSelector(thisNode);
+            if (k) return k;
+        }
+    }
+    return document.childNodes.map(findSelector).filter(v => v)[0] || null;
+};
+
+function useNode(text) {
+    const hasHtml = text.includes('<html');
+
+    const tagAttr = 'stage-name';
+    const tagValue = !hasHtml && `${Date.now()}`;
+    const [prefixTag, suffixTag] = [`<div ${tagAttr}="${tagValue}">`, '</div>'];
+
+    const document = parse(hasHtml ? text : `${prefixTag}${text}${suffixTag}`);
+
+    return {
+        document,
+        stringifyNode: () => {
+            if (hasHtml) return serialize(document);
+            const node = parseSelector(document, `${tagAttr}=${tagValue}`);
+            return serialize(node);
+        }
+    }
+};
